@@ -1,69 +1,68 @@
 import streamlit as st
 import pandas as pd
 import folium
+from folium.plugins import MarkerCluster
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from streamlit_folium import st_folium
 
-st.title("🚻 서울시 공중화장실 찾기 (Folium 지도)")
+# 데이터 로드
+@st.cache_data
+def load_data():
+    return pd.read_csv("seoul_toilets.csv")  # 이 파일에는 위도, 경도, 건물명, 개방시간, 주소 등이 포함되어야 합니다.
 
-uploaded_file = st.file_uploader("서울시 공중화장실 CSV 업로드", type="csv")
+df = load_data()
 
-address = st.text_input("도로명 주소를 입력하세요", "서울특별시 종로구 세종대로 175")
-
-# 주소를 위도/경도로 변환
-def geocode_address(addr):
-    geolocator = Nominatim(user_agent="seoul_toilet_app")
-    location = geolocator.geocode(addr)
+# 주소 → 좌표 변환 함수
+def geocode_address(address):
+    geolocator = Nominatim(user_agent="toilet_locator")
+    location = geolocator.geocode(f"{address}, Seoul, South Korea")
     return (location.latitude, location.longitude) if location else None
 
-# 가장 가까운 N개 화장실 반환
-def get_nearest(df, user_loc, n=5):
-    df["거리(km)"] = df.apply(lambda row: geodesic(user_loc, (row["위도"], row["경도"])).km, axis=1)
+# 최근접 화장실 5개 추출 함수
+def find_nearest_toilets(user_location, df, n=5):
+    df["거리(km)"] = df.apply(
+        lambda row: geodesic(user_location, (row["위도"], row["경도"])).km, axis=1
+    )
     return df.sort_values("거리(km)").head(n)
 
-# 본격 실행
-if uploaded_file and address:
-    df = pd.read_csv(uploaded_file)
+# 스트림릿 앱 UI
+st.title("🚻 서울시 공중화장실 지도")
+address = st.text_input("도로명 주소를 입력하세요 (예: 서울특별시 중구 세종대로 110)", "")
 
-    # 필수 컬럼 확인
-    required_columns = {"화장실명", "건물명", "도로명주소", "위도", "경도", "개방시간"}
-    if not required_columns.issubset(df.columns):
-        st.error(f"CSV에 다음 컬럼이 있어야 해요: {required_columns}")
+if address:
+    user_location = geocode_address(address)
+    
+    if user_location:
+        st.success("주소를 성공적으로 찾았습니다.")
+        
+        # 가까운 화장실 5곳 찾기
+        nearest = find_nearest_toilets(user_location, df)
+        
+        # 지도 생성
+        m = folium.Map(location=user_location, zoom_start=15)
+        folium.Marker(user_location, tooltip="입력 위치", icon=folium.Icon(color="blue")).add_to(m)
+        
+        marker_cluster = MarkerCluster().add_to(m)
+        for _, row in nearest.iterrows():
+            popup_text = f"""
+            <b>{row['건물명']}</b><br>
+            개방시간: {row['개방시간']}<br>
+            주소: {row['주소']}<br>
+            거리: {row['거리(km)']:.2f}km
+            """
+            folium.Marker(
+                location=[row["위도"], row["경도"]],
+                popup=popup_text,
+                icon=folium.Icon(color="green", icon="info-sign"),
+            ).add_to(marker_cluster)
+
+        # 지도 출력
+        st_folium(m, width=700, height=500)
+
+        # 표로도 보기
+        st.subheader("가까운 화장실 정보")
+        st.dataframe(nearest[["건물명", "개방시간", "주소", "거리(km)"]].reset_index(drop=True))
+        
     else:
-        user_loc = geocode_address(address)
-
-        if user_loc:
-            nearest = get_nearest(df, user_loc)
-
-            # 지도 만들기
-            m = folium.Map(location=user_loc, zoom_start=16)
-            folium.Marker(user_loc, tooltip="입력한 위치", icon=folium.Icon(color="red")).add_to(m)
-
-            for _, row in nearest.iterrows():
-                folium.Marker(
-                    location=(row["위도"], row["경도"]),
-                    tooltip=row["화장실명"],
-                    popup=folium.Popup(f"""
-                    🚻 <b>{row['화장실명']}</b><br>
-                    🏢 건물명: {row['건물명']}<br>
-                    📍 주소: {row['도로명주소']}<br>
-                    ⏰ 개방시간: {row['개방시간']}<br>
-                    📏 거리: {row['거리(km)']:.2f} km
-                    """, max_width=300),
-                    icon=folium.Icon(color="blue")
-                ).add_to(m)
-
-            # 지도 출력
-            st.subheader("🗺️ 지도에서 가까운 공중화장실 보기")
-            st_folium(m, width=700, height=500)
-
-            # 표 출력
-            st.subheader("📋 가까운 공중화장실 5곳 정보")
-            st.dataframe(
-                nearest[["화장실명", "건물명", "도로명주소", "개방시간", "거리(km)"]].reset_index(drop=True)
-            )
-        else:
-            st.error("❌ 입력한 주소를 찾을 수 없습니다. 좀 더 구체적으로 입력해보세요.")
-else:
-    st.info("CSV 파일을 업로드하고 도로명 주소를 입력하면 결과가 표시됩니다.")
+        st.error("주소를 찾을 수 없습니다. 다시 입력해 주세요.")
