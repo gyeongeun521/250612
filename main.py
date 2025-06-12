@@ -5,70 +5,65 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from streamlit_folium import st_folium
 
-st.title("🚻 서울시 공중화장실 위치 찾기")
+st.title("🚻 서울시 공중화장실 찾기 (Folium 지도)")
 
-# CSV 파일 업로드
-uploaded_file = st.file_uploader("📁 이미 업로드한 CSV 파일", type="csv")
+uploaded_file = st.file_uploader("서울시 공중화장실 CSV 업로드", type="csv")
 
-# 도로명 주소 입력
 address = st.text_input("도로명 주소를 입력하세요", "서울특별시 종로구 세종대로 175")
 
-# 주소 → 위도/경도 변환
-def geocode_address(address):
-    geolocator = Nominatim(user_agent="toilet_app_korea")
-    location = geolocator.geocode(address)
-    if location:
-        return (location.latitude, location.longitude)
-    return None
+# 주소를 위도/경도로 변환
+def geocode_address(addr):
+    geolocator = Nominatim(user_agent="seoul_toilet_app")
+    location = geolocator.geocode(addr)
+    return (location.latitude, location.longitude) if location else None
 
-# 가장 가까운 화장실 5개 찾기
-def get_nearest_toilets(user_location, toilet_df, count=5):
-    toilet_df["거리(km)"] = toilet_df.apply(
-        lambda row: geodesic(user_location, (row["위도"], row["경도"])).km, axis=1
-    )
-    return toilet_df.sort_values("거리(km)").head(count)
+# 가장 가까운 N개 화장실 반환
+def get_nearest(df, user_loc, n=5):
+    df["거리(km)"] = df.apply(lambda row: geodesic(user_loc, (row["위도"], row["경도"])).km, axis=1)
+    return df.sort_values("거리(km)").head(n)
 
-# 실행 조건 확인
+# 본격 실행
 if uploaded_file and address:
-    # 데이터프레임 불러오기
     df = pd.read_csv(uploaded_file)
-    
-    # 필요한 컬럼 존재 여부 확인
-    required_columns = {"화장실명", "도로명주소", "위도", "경도", "개방시간"}
+
+    # 필수 컬럼 확인
+    required_columns = {"화장실명", "건물명", "도로명주소", "위도", "경도", "개방시간"}
     if not required_columns.issubset(df.columns):
-        st.error(f"CSV 파일에 다음 컬럼이 포함되어야 합니다: {required_columns}")
+        st.error(f"CSV에 다음 컬럼이 있어야 해요: {required_columns}")
     else:
-        user_location = geocode_address(address)
+        user_loc = geocode_address(address)
 
-        if user_location:
-            nearest_df = get_nearest_toilets(user_location, df)
+        if user_loc:
+            nearest = get_nearest(df, user_loc)
 
-            # 지도 생성
-            m = folium.Map(location=user_location, zoom_start=16)
-            folium.Marker(
-                user_location,
-                tooltip="입력한 위치",
-                icon=folium.Icon(color="red")
-            ).add_to(m)
+            # 지도 만들기
+            m = folium.Map(location=user_loc, zoom_start=16)
+            folium.Marker(user_loc, tooltip="입력한 위치", icon=folium.Icon(color="red")).add_to(m)
 
-            # 가장 가까운 화장실 5개 지도에 표시
-            for _, row in nearest_df.iterrows():
+            for _, row in nearest.iterrows():
                 folium.Marker(
                     location=(row["위도"], row["경도"]),
                     tooltip=row["화장실명"],
-                    popup=f"""
-                    📍 {row['도로명주소']}<br>
-                    ⏰ {row['개방시간']}<br>
+                    popup=folium.Popup(f"""
+                    🚻 <b>{row['화장실명']}</b><br>
+                    🏢 건물명: {row['건물명']}<br>
+                    📍 주소: {row['도로명주소']}<br>
+                    ⏰ 개방시간: {row['개방시간']}<br>
                     📏 거리: {row['거리(km)']:.2f} km
-                    """,
-                    icon=folium.Icon(color="blue", icon="info-sign")
+                    """, max_width=300),
+                    icon=folium.Icon(color="blue")
                 ).add_to(m)
 
-            # 지도와 표 출력
-            st.subheader("🗺️ 화장실 위치 지도")
+            # 지도 출력
+            st.subheader("🗺️ 지도에서 가까운 공중화장실 보기")
             st_folium(m, width=700, height=500)
 
-            st.subheader("📋 가까운 화장실 정보")
-            st.dataframe(nearest_df[["화장실명", "도로명주소", "개방시간", "거리(km)"]].reset_index(drop=True))
+            # 표 출력
+            st.subheader("📋 가까운 공중화장실 5곳 정보")
+            st.dataframe(
+                nearest[["화장실명", "건물명", "도로명주소", "개방시간", "거리(km)"]].reset_index(drop=True)
+            )
         else:
-            st.error("입력한 주소를 찾을 수 없습니다.")
+            st.error("❌ 입력한 주소를 찾을 수 없습니다. 좀 더 구체적으로 입력해보세요.")
+else:
+    st.info("CSV 파일을 업로드하고 도로명 주소를 입력하면 결과가 표시됩니다.")
