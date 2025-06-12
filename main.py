@@ -6,63 +6,66 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from streamlit_folium import st_folium
 
-# 데이터 로드
+# 데이터 불러오기
 @st.cache_data
 def load_data():
-    return pd.read_csv("seoul_toilets.csv")  # 이 파일에는 위도, 경도, 건물명, 개방시간, 주소 등이 포함되어야 합니다.
+    # CSV에는 '건물명', '개방시간', '위도', '경도', '도로명주소'가 포함되어 있어야 합니다.
+    return pd.read_csv("seoul_toilets.csv")
 
 df = load_data()
 
-# 주소 → 좌표 변환 함수
+# 주소 → 좌표 변환
 def geocode_address(address):
-    geolocator = Nominatim(user_agent="toilet_locator")
+    geolocator = Nominatim(user_agent="toilet_locator_seoul")
     location = geolocator.geocode(f"{address}, Seoul, South Korea")
-    return (location.latitude, location.longitude) if location else None
+    if location:
+        return (location.latitude, location.longitude)
+    return None
 
-# 최근접 화장실 5개 추출 함수
+# 가장 가까운 화장실 5곳 찾기
 def find_nearest_toilets(user_location, df, n=5):
-    df["거리(km)"] = df.apply(
-        lambda row: geodesic(user_location, (row["위도"], row["경도"])).km, axis=1
+    df['거리(km)'] = df.apply(
+        lambda row: geodesic(user_location, (row['위도'], row['경도'])).km,
+        axis=1
     )
-    return df.sort_values("거리(km)").head(n)
+    return df.sort_values(by='거리(km)').head(n)
 
-# 스트림릿 앱 UI
-st.title("🚻 서울시 공중화장실 지도")
-address = st.text_input("도로명 주소를 입력하세요 (예: 서울특별시 중구 세종대로 110)", "")
+# Streamlit UI
+st.title("🚻 서울시 공중화장실 찾기")
+st.markdown("도로명 주소를 입력하면 가까운 공중화장실 5곳을 지도에 표시합니다.")
 
-if address:
-    user_location = geocode_address(address)
-    
-    if user_location:
-        st.success("주소를 성공적으로 찾았습니다.")
-        
-        # 가까운 화장실 5곳 찾기
-        nearest = find_nearest_toilets(user_location, df)
-        
-        # 지도 생성
-        m = folium.Map(location=user_location, zoom_start=15)
-        folium.Marker(user_location, tooltip="입력 위치", icon=folium.Icon(color="blue")).add_to(m)
-        
-        marker_cluster = MarkerCluster().add_to(m)
-        for _, row in nearest.iterrows():
-            popup_text = f"""
-            <b>{row['건물명']}</b><br>
-            개방시간: {row['개방시간']}<br>
-            주소: {row['주소']}<br>
-            거리: {row['거리(km)']:.2f}km
-            """
-            folium.Marker(
-                location=[row["위도"], row["경도"]],
-                popup=popup_text,
-                icon=folium.Icon(color="green", icon="info-sign"),
-            ).add_to(marker_cluster)
+# 지도 초기화 (서울 중심)
+m = folium.Map(location=[37.5665, 126.9780], zoom_start=12)
+marker_cluster = MarkerCluster().add_to(m)
 
-        # 지도 출력
-        st_folium(m, width=700, height=500)
+# 주소 입력
+address = st.text_input("도로명 주소를 입력하세요:", "서울특별시 종로구 세종대로 175")
 
-        # 표로도 보기
-        st.subheader("가까운 화장실 정보")
-        st.dataframe(nearest[["건물명", "개방시간", "주소", "거리(km)"]].reset_index(drop=True))
-        
-    else:
-        st.error("주소를 찾을 수 없습니다. 다시 입력해 주세요.")
+# 주소를 위도/경도로 변환
+location = geocode_address(address)
+
+if location:
+    # 입력 위치 마커
+    folium.Marker(
+        location,
+        popup="입력한 위치",
+        icon=folium.Icon(color="blue", icon="home")
+    ).add_to(m)
+
+    # 가까운 화장실 5곳 찾기
+    nearest = find_nearest_toilets(location, df, 5)
+
+    # 마커 표시
+    for _, row in nearest.iterrows():
+        folium.Marker(
+            [row['위도'], row['경도']],
+            popup=f"{row['건물명']}<br>개방시간: {row['개방시간']}",
+            icon=folium.Icon(color="green", icon="info-sign")
+        ).add_to(marker_cluster)
+
+    # 결과 표 출력
+    st.subheader("🔍 가까운 공중화장실 정보")
+    st.dataframe(nearest[['건물명', '도로명주소', '개방시간', '거리(km)']].reset_index(drop=True))
+
+# 지도 출력
+st_data = st_folium(m, width=700, height=500)
