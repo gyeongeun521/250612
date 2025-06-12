@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import folium
 from folium.plugins import MarkerCluster
-from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from streamlit_folium import st_folium
 import io
@@ -18,17 +17,10 @@ def load_data():
 동대문디자인플라자화장실,09:00~23:00,37.5669,127.0094,서울특별시 중구 을지로 281
 """
     df = pd.read_csv(io.StringIO(csv_data))
-    df.columns = df.columns.str.strip()  # 혹시 모를 공백 제거
+    df.columns = df.columns.str.strip()
     return df
 
 df = load_data()
-
-def geocode_address(address):
-    geolocator = Nominatim(user_agent="toilet_locator_seoul")
-    location = geolocator.geocode(f"{address}, Seoul, South Korea")
-    if location:
-        return (location.latitude, location.longitude)
-    return None
 
 def find_nearest_toilets(user_location, df, n=5):
     df['거리(km)'] = df.apply(
@@ -38,31 +30,27 @@ def find_nearest_toilets(user_location, df, n=5):
     return df.sort_values(by='거리(km)').head(n)
 
 st.title("🚻 서울시 공중화장실 찾기")
-st.markdown("도로명 주소를 입력하면 가까운 공중화장실 5곳을 지도에 표시합니다.")
+st.markdown("위도와 경도를 직접 입력하면 가까운 공중화장실 5곳을 지도에 표시합니다.")
 
-m = folium.Map(location=[37.5665, 126.9780], zoom_start=12)
+lat = st.number_input("📍 위도 입력", value=37.5656, format="%.6f")
+lon = st.number_input("📍 경도 입력", value=126.9784, format="%.6f")
+user_location = (lat, lon)
+
+# 지도 초기화
+m = folium.Map(location=user_location, zoom_start=14)
+folium.Marker(user_location, tooltip="입력한 위치", icon=folium.Icon(color="blue")).add_to(m)
 marker_cluster = MarkerCluster().add_to(m)
 
-address = st.text_input("도로명 주소를 입력하세요:", "서울특별시 종로구 세종대로 175")
-location = geocode_address(address)
+nearest = find_nearest_toilets(user_location, df, 5)
 
-if location:
+for _, row in nearest.iterrows():
     folium.Marker(
-        location,
-        popup="입력한 위치",
-        icon=folium.Icon(color="blue", icon="home")
-    ).add_to(m)
+        [row['Y'], row['X']],
+        popup=f"{row['건물명']}<br>개방시간: {row['개방시간']}",
+        icon=folium.Icon(color="green")
+    ).add_to(marker_cluster)
 
-    nearest = find_nearest_toilets(location, df, 5)
-
-    for _, row in nearest.iterrows():
-        folium.Marker(
-            [row['Y'], row['X']],
-            popup=f"{row['건물명']}<br>개방시간: {row['개방시간']}",
-            icon=folium.Icon(color="green", icon="info-sign")
-        ).add_to(marker_cluster)
-
-    st.subheader("🔍 가까운 공중화장실 정보")
-    st.dataframe(nearest[['건물명', '도로명주소', '개방시간', '거리(km)']].reset_index(drop=True))
+st.subheader("🔍 가까운 공중화장실 정보")
+st.dataframe(nearest[['건물명', '도로명주소', '개방시간', '거리(km)']].reset_index(drop=True))
 
 st_folium(m, width=700, height=500)
