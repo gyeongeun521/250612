@@ -30,18 +30,26 @@ def find_nearest_toilets(user_location, df, n=5):
     return df.sort_values(by='거리(km)').head(n)
 
 st.title("🚻 서울시 공중화장실 찾기")
-st.markdown("위도와 경도를 직접 입력하면 가까운 공중화장실 5곳을 지도에 표시합니다.")
+st.markdown("위도와 경도를 입력하면 가까운 공중화장실 5곳을 지도에 표시합니다.")
 
+# 사이드바 필터 추가
+only_24hr = st.sidebar.checkbox("🕒 24시간 운영 화장실만 보기")
+
+# 위치 입력
 lat = st.number_input("📍 위도 입력", value=37.5656, format="%.6f")
 lon = st.number_input("📍 경도 입력", value=126.9784, format="%.6f")
 user_location = (lat, lon)
 
-# 지도 초기화
+# 필터 적용
+filtered_df = df[df['개방시간'] == '24시간'] if only_24hr else df
+
+# 가까운 화장실 추출
+nearest = find_nearest_toilets(user_location, filtered_df, 5)
+
+# 지도 생성
 m = folium.Map(location=user_location, zoom_start=14)
 folium.Marker(user_location, tooltip="입력한 위치", icon=folium.Icon(color="blue")).add_to(m)
 marker_cluster = MarkerCluster().add_to(m)
-
-nearest = find_nearest_toilets(user_location, df, 5)
 
 for _, row in nearest.iterrows():
     folium.Marker(
@@ -50,7 +58,9 @@ for _, row in nearest.iterrows():
         icon=folium.Icon(color="green")
     ).add_to(marker_cluster)
 
+# 결과 출력
 st.subheader("🔍 가까운 공중화장실 정보")
 st.dataframe(nearest[['건물명', '도로명주소', '개방시간', '거리(km)']].reset_index(drop=True))
 
+# 지도 출력
 st_folium(m, width=700, height=500)
