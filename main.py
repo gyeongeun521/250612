@@ -2,99 +2,81 @@ import streamlit as st
 import pandas as pd
 import folium
 from folium.plugins import MarkerCluster
-from geopy.distance import geodesic
 from streamlit_folium import st_folium
+from geopy.distance import geodesic
 
-# 서울시 각 구의 중심 좌표 (25개)
-gu_centers = {
-    "종로구": (37.5731, 126.9795),
-    "중구": (37.5636, 126.9978),
-    "용산구": (37.5324, 126.9902),
-    "성동구": (37.5634, 127.0364),
-    "광진구": (37.5385, 127.0823),
-    "동대문구": (37.5744, 127.0402),
-    "중랑구": (37.6064, 127.0927),
-    "성북구": (37.5894, 127.0167),
-    "강북구": (37.6396, 127.0256),
-    "도봉구": (37.6688, 127.0470),
-    "노원구": (37.6542, 127.0568),
-    "은평구": (37.6176, 126.9227),
-    "서대문구": (37.5791, 126.9368),
-    "마포구": (37.5663, 126.9014),
-    "양천구": (37.5169, 126.8664),
-    "강서구": (37.5509, 126.8495),
-    "구로구": (37.4955, 126.8878),
-    "금천구": (37.4604, 126.9004),
-    "영등포구": (37.5264, 126.8963),
-    "동작구": (37.5124, 126.9393),
-    "관악구": (37.4781, 126.9516),
-    "서초구": (37.4836, 127.0326),
-    "강남구": (37.5172, 127.0473),
-    "송파구": (37.5146, 127.1060),
-    "강동구": (37.5301, 127.1238),
-}
+st.set_page_config(page_title="서울시 공중화장실 지도", layout="wide")
 
-# 데이터 로드
+st.title("🚻 서울시 공중화장실 지도")
+st.markdown("CSV 파일을 업로드하고, 원하는 **구**와 **개방 여부**를 선택해 지도에서 공중화장실을 확인하세요.")
+
+# CSV 파일 업로드
+uploaded_file = st.file_uploader("📤 서울시 공중화장실 CSV 파일 업로드", type="csv")
+
 @st.cache_data
-def load_data():
-    df = pd.read_csv("seoul_toilets.csv")
-    df.columns = df.columns.str.strip()  # 공백 제거
+def load_and_clean_data(file):
+    df = pd.read_csv(file)
+    df.columns = df.columns.str.strip()
 
-    # 컬럼명 표준화: 위도(Y), 경도(X) 기준
-    rename_map = {
-        '위도': 'Y',
-        '경도': 'X',
-        'lat': 'Y',
-        'Latitude': 'Y',
-        'lon': 'X',
-        'Long': 'X',
-        'longitude': 'X'
-    }
-    df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
-    
-    # 필수 컬럼 체크
+    # 컬럼명 표준화
+    df.rename(columns={
+        '위도': 'Y', '경도': 'X',
+        'lat': 'Y', 'latitude': 'Y', 'Latitude': 'Y',
+        'lon': 'X', 'longitude': 'X', 'Longitude': 'X'
+    }, inplace=True)
+
     if 'Y' not in df.columns or 'X' not in df.columns:
-        st.error("⚠️ CSV 파일에 '위도(Y)'와 '경도(X)' 컬럼이 있어야 합니다.")
+        st.error("❌ CSV 파일에 '위도(Y)'와 '경도(X)' 컬럼이 있어야 합니다.")
         st.stop()
-        
+
     return df
 
-df = load_data()
+if uploaded_file:
+    df = load_and_clean_data(uploaded_file)
 
-# 가장 가까운 화장실 n개 찾기
-def find_nearest_toilets(user_location, df, n=5):
-    df['거리(km)'] = df.apply(
-        lambda row: geodesic(user_location, (row['Y'], row['X'])).km,
-        axis=1
-    )
-    return df.sort_values(by='거리(km)').head(n)
+    # 구 목록 추출
+    if '도로명주소' in df.columns:
+        df['구'] = df['도로명주소'].str.extract(r'서울특별시\s*(\S+구)')
+    else:
+        st.error("❌ '도로명주소' 컬럼이 필요합니다.")
+        st.stop()
 
-# 제목
-st.title("🚻 서울시 공중화장실 찾기 (구 선택 기반)")
-st.markdown("서울시 25개 구 중 하나를 선택하면, 해당 구 중심을 기준으로 가까운 공중화장실을 지도와 표로 보여줍니다.")
+    # 필터 선택
+    gu_list = df['구'].dropna().unique().tolist()
+    selected_gu = st.selectbox("🏙️ 구 선택", sorted(gu_list))
 
-# 구 선택
-gu_selected = st.selectbox("🔍 서울시 구 선택", list(gu_centers.keys()))
-user_location = gu_centers[gu_selected]
+    open_options = ['전체', '24시간', '시간제 개방']
+    open_filter = st.selectbox("🕒 개방 시간 필터", open_options)
 
-# 가장 가까운 화장실 찾기
-nearest = find_nearest_toilets(user_location, df, 5)
+    # 필터 적용
+    filtered_df = df[df['구'] == selected_gu]
 
-# 지도 생성
-m = folium.Map(location=user_location, zoom_start=14)
-folium.Marker(user_location, tooltip=f"{gu_selected} 중심", icon=folium.Icon(color="blue")).add_to(m)
-marker_cluster = MarkerCluster().add_to(m)
+    if open_filter == '24시간':
+        filtered_df = filtered_df[filtered_df['개방시간'].str.contains("24|24시간")]
+    elif open_filter == '시간제 개방':
+        filtered_df = filtered_df[~filtered_df['개방시간'].str.contains("24|24시간")]
 
-for _, row in nearest.iterrows():
-    folium.Marker(
-        [row['Y'], row['X']],
-        popup=f"{row.get('건물명', '이름 없음')}<br>개방시간: {row.get('개방시간', '정보 없음')}",
-        icon=folium.Icon(color="green")
-    ).add_to(marker_cluster)
+    st.subheader(f"🔍 '{selected_gu}' 지역 공중화장실 - {len(filtered_df)}개")
 
-# 결과 출력
-st.subheader("📋 가까운 공중화장실 정보")
-st.dataframe(nearest[['건물명', '도로명주소', '개방시간', '거리(km)']].reset_index(drop=True))
+    # 지도 시각화
+    if not filtered_df.empty:
+        center = [filtered_df['Y'].mean(), filtered_df['X'].mean()]
+        m = folium.Map(location=center, zoom_start=14)
+        marker_cluster = MarkerCluster().add_to(m)
 
-# 지도 출력
-st_folium(m, width=700, height=500)
+        for _, row in filtered_df.iterrows():
+            folium.Marker(
+                [row['Y'], row['X']],
+                popup=f"{row['건물명']}<br>개방시간: {row['개방시간']}",
+                tooltip=row['건물명'],
+                icon=folium.Icon(color="green")
+            ).add_to(marker_cluster)
+
+        st_folium(m, width=700, height=500)
+    else:
+        st.warning("⚠️ 선택한 조건에 해당하는 화장실이 없습니다.")
+
+    # 데이터 테이블 출력
+    st.dataframe(filtered_df[['건물명', '도로명주소', '개방시간']].reset_index(drop=True))
+else:
+    st.info("👆 CSV 파일을 먼저 업로드해주세요.")
